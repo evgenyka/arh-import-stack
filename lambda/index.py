@@ -4,7 +4,7 @@ import logging
 import time
 
 logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 RETRIES = 20
 DELAY = 30
@@ -58,6 +58,10 @@ def handler(event, context):
             resources = resilience_hub.list_app_version_resources(appArn=app_arn, appVersion='draft').get('physicalResources', [])
             if not resources:
                 logger.warning("No resources found after import")
+            else:
+                logger.info(f"Found {len(resources)} resources in the app")
+                for resource in resources:
+                    logger.debug(f"Resource: {json.dumps(resource)}")   
         except Exception as debug_e:
             logger.debug(f"Debugging operation failed: {str(debug_e)}")
 
