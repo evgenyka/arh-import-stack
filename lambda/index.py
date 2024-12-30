@@ -1,138 +1,68 @@
 import boto3
-import time
-import logging
 import json
-import botocore
+import logging
+import time
 
 logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
+RETRIES = 20
+DELAY = 30
+
+# Helper function to retrieve the CloudFormation stack ARN
 def get_stack_arn(stack_name):
-    cfn_client = boto3.client('cloudformation')
     try:
-        response = cfn_client.describe_stacks(StackName=stack_name)
+        response = boto3.client('cloudformation').describe_stacks(StackName=stack_name)
         return response['Stacks'][0]['StackId']
-    except botocore.exceptions.ClientError as e:
-        logger.error(f"Error getting stack ARN: {e.response['Error']['Message']}")
+    except boto3.exceptions.Boto3Error as e:
+        logger.error(f"Error getting stack ARN: {str(e)}")
         raise
 
+# Helper function to check status with retries
+def wait_for_status(check_function, success_status, failure_status, description):
+    for attempt in range(RETRIES):
+        response = check_function()
+        status = response.get('status')
+        if status == success_status:
+            return response
+        if status == failure_status:
+            raise Exception(f"{description} failed")
+        if status in ['Pending', 'InProgress'] and attempt < RETRIES - 1:
+            time.sleep(DELAY)
+    raise Exception(f"{description} timed out")
+
+# Lambda handler
 def handler(event, context):
-    logger.info(f"Received event: {event}")
-    if event['RequestType'] in ['Create', 'Update']:
+    logger.info(f"Event: {json.dumps(event)}")
+    try:
+        if event.get('RequestType') == 'Delete':
+            return {'Status': 'SUCCESS', 'Reason': 'Delete event - no action required'}
+
+        app_arn = event['ResourceProperties']['AppArn']
+        stack_name = event['ResourceProperties']['SourceStackName']
+
+        resilience_hub = boto3.client('resiliencehub')
+        stack_arn = get_stack_arn(stack_name)
+
+        resilience_hub.import_resources_to_draft_app_version(appArn=app_arn, sourceArns=[stack_arn])
+        wait_for_status(lambda: resilience_hub.describe_draft_app_version_resources_import_status(appArn=app_arn),
+                        'Success', 'Failed', 'Import resources')
+
+        # Debugging-only operations
+        logger.debug("Starting debugging-only operations")
         try:
-            resilience_hub = boto3.client('resiliencehub')
-            
-            app_arn = event['ResourceProperties']['AppArn']
-            stack_name = event['ResourceProperties']['SourceStackName']
-            
-            # Get the stack ARN
-            stack_arn = get_stack_arn(stack_name)
-            logger.info(f"Retrieved stack ARN: {stack_arn}")
-            
-            # Import resources to draft app version
-            logger.info(f"Importing resources from stack {stack_arn} to app {app_arn}")
-            try:
-                import_response = resilience_hub.import_resources_to_draft_app_version(
-                    appArn=app_arn,
-                    sourceArns=[stack_arn]
-                )
-                logger.info(f"Import response: {json.dumps(import_response, default=str)}")
-            except botocore.exceptions.ClientError as e:
-                logger.error(f"Error during import: {e.response['Error']['Message']}")
-                raise
+            resilience_hub.resolve_app_version_resources(appArn=app_arn, appVersion='draft')
+            wait_for_status(lambda: resilience_hub.describe_app_version_resources_resolution_status(appArn=app_arn, appVersion='draft'),
+                            'Success', 'Failed', 'Resolve resources')
 
-            # Wait for import to complete
-            for i in range(20):  # Wait up to 10 minutes
-                logger.info(f"Checking import status (attempt {i+1})")
-                try:
-                    status_response = resilience_hub.describe_draft_app_version_resources_import_status(appArn=app_arn)
-                    logger.info(f"Import status response: {json.dumps(status_response, default=str)}")
-                    
-                    status = status_response.get('status')
-                    if status == 'Success':
-                        logger.info("Import completed successfully")
-                        break
-                    elif status == 'Failed':
-                        logger.error("Import failed")
-                        raise Exception('Import failed')
-                    elif status in ['Pending', 'InProgress']:
-                        if i == 19:  # Last iteration
-                            logger.error("Import timed out")
-                            raise Exception('Import timed out')
-                        time.sleep(30)
-                    else:
-                        logger.error(f"Unknown import status: {status}")
-                        raise Exception(f'Unknown import status: {status}')
-                except botocore.exceptions.ClientError as e:
-                    logger.error(f"Error checking import status: {e.response['Error']['Message']}")
-                    raise
+            resources = resilience_hub.list_app_version_resources(appArn=app_arn, appVersion='draft').get('physicalResources', [])
+            if not resources:
+                logger.warning("No resources found after import")
+        except Exception as debug_e:
+            logger.debug(f"Debugging operation failed: {str(debug_e)}")
 
-            # Resolve resources
-            logger.info("Resolving resources")
-            try:
-                resolve_response = resilience_hub.resolve_app_version_resources(
-                    appArn=app_arn,
-                    appVersion='draft'
-                )
-                logger.info(f"Resolve response: {json.dumps(resolve_response, default=str)}")
-            except botocore.exceptions.ClientError as e:
-                logger.error(f"Error resolving resources: {e.response['Error']['Message']}")
-                raise
+        return {'Status': 'SUCCESS'}
 
-            # Wait for resolution to complete
-            for i in range(20):  # Wait up to 10 minutes
-                logger.info(f"Checking resolution status (attempt {i+1})")
-                try:
-                    status_response = resilience_hub.describe_app_version_resources_resolution_status(
-                        appArn=app_arn,
-                        appVersion='draft'
-                    )
-                    logger.info(f"Resolution status response: {json.dumps(status_response, default=str)}")
-                    
-                    status = status_response.get('status')
-                    if status == 'Success':
-                        logger.info("Resolution completed successfully")
-                        break
-                    elif status == 'Failed':
-                        logger.error("Resolution failed")
-                        raise Exception('Resolution failed')
-                    elif status in ['Pending', 'InProgress']:
-                        if i == 19:  # Last iteration
-                            logger.error("Resolution timed out")
-                            raise Exception('Resolution timed out')
-                        time.sleep(30)
-                    else:
-                        logger.error(f"Unknown resolution status: {status}")
-                        raise Exception(f'Unknown resolution status: {status}')
-                except botocore.exceptions.ClientError as e:
-                    logger.error(f"Error checking resolution status: {e.response['Error']['Message']}")
-                    raise
-
-            # List resources in the app version
-            try:
-                list_response = resilience_hub.list_app_version_resources(
-                    appArn=app_arn,
-                    appVersion='draft'
-                )
-                logger.info(f"List resources response: {json.dumps(list_response, default=str)}")
-                
-                resources = list_response.get('physicalResources', [])
-                if not resources:
-                    logger.warning("No resources found in the app after import")
-                else:
-                    logger.info(f"Found {len(resources)} resources in the app")
-            except botocore.exceptions.ClientError as e:
-                logger.error(f"Error listing resources: {e.response['Error']['Message']}")
-                raise
-
-            return {'PhysicalResourceId': 'ImportResources', 'Status': 'SUCCESS'}
-        except Exception as e:
-            logger.error(f"An error occurred: {str(e)}")
-            return {
-                'PhysicalResourceId': 'ImportResources',
-                'Status': 'FAILED',
-                'Reason': str(e)
-            }
-    else:
-        logger.info("No action required for Delete event")
-        return {'PhysicalResourceId': 'ImportResources', 'Status': 'SUCCESS'}
+    except Exception as e:
+        logger.error(f"Error: {str(e)}", exc_info=True)
+        return {'Status': 'FAILED', 'Reason': str(e)}

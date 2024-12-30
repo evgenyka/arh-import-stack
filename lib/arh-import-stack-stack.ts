@@ -53,22 +53,6 @@ export class ArhImportStackStack extends cdk.Stack {
       resources: ['*'],
     }));
 
-    // Grant permissions to the Lambda function
-/*    importFunction.addToRolePolicy(new iam.PolicyStatement({
-      actions: [
-        'resiliencehub:ImportResourcesToDraftAppVersion',
-        'resiliencehub:ListAppVersionResources', 
-        'resiliencehub:DescribeDraftAppVersionResourcesImportStatus',
-        'resiliencehub:DescribeApp',
-        'cloudformation:DescribeStacks',
-        'cloudformation:ListStackResources', 
-        'dynamodb:DescribeTable',
-        'dynamodb:ListTables'
-      ],
-      resources: ['*'],
-    }));
-*/    
-
     // Create Custom Resource for importing resources
     const importResources = new cr.AwsCustomResource(this, 'ImportResources', {
       onCreate: {
