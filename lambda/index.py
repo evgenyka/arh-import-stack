@@ -49,6 +49,7 @@ def handler(event, context):
                         'Success', 'Failed', 'Import resources')
 
         # Debugging-only operations
+        """
         logger.debug("Starting debugging-only operations")
         try:
             resilience_hub.resolve_app_version_resources(appArn=app_arn, appVersion='draft')
@@ -66,7 +67,7 @@ def handler(event, context):
             logger.debug(f"Debugging operation failed: {str(debug_e)}")
 
         return {'Status': 'SUCCESS'}
-
+        """
     except Exception as e:
         logger.error(f"Error: {str(e)}", exc_info=True)
         return {'Status': 'FAILED', 'Reason': str(e)}

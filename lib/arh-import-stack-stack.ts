@@ -33,7 +33,7 @@ export class ArhImportStackStack extends cdk.Stack {
       description: 'Import resources into Resilience Hub Application',
       handler: 'index.handler',
       code: lambda.Code.fromAsset('lambda'),
-      timeout: cdk.Duration.minutes(5),
+      timeout: cdk.Duration.minutes(10),
     });
 
     // Attach the AWS managed policy to the Lambda function's role
