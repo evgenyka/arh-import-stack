@@ -116,7 +116,7 @@ def handler(event, context):
                 )
                 logger.info(f"List resources response: {json.dumps(list_response, default=str)}")
                 
-                resources = list_response.get('physicalResourceId', [])
+                resources = list_response.get('physicalResources', [])
                 if not resources:
                     logger.warning("No resources found in the app after import")
                 else:
